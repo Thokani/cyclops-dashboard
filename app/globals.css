@@ -1,26 +1,102 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --orange: #f97316;
+  --orange-dark: #c2410c;
+  --red: #dc2626;
+  --bg: #080808;
+  --card: #0f0f0f;
+  --border: #1f1f1f;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+* { box-sizing: border-box; }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: #fff;
+  font-family: 'Courier New', Courier, monospace;
+  overflow-x: hidden;
+}
+
+/* Pixel font feel for numbers */
+.num {
+  font-family: 'Courier New', monospace;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* Scanline overlay */
+.scanlines {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 100;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.03) 2px,
+    rgba(0, 0, 0, 0.03) 4px
+  );
+}
+
+/* Orange glow */
+.glow-orange {
+  box-shadow: 0 0 20px rgba(249, 115, 22, 0.3), 0 0 40px rgba(249, 115, 22, 0.1);
+}
+.glow-orange-text {
+  text-shadow: 0 0 20px rgba(249, 115, 22, 0.8);
+}
+
+/* Pixel border corners */
+.pixel-border {
+  position: relative;
+  border: 1px solid #1f1f1f;
+}
+.pixel-border::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border: 2px solid transparent;
+  border-image: linear-gradient(135deg, #f97316 0%, transparent 40%, transparent 60%, #f97316 100%) 1;
+  pointer-events: none;
+}
+
+/* Energy bar pulse */
+@keyframes pulse-bar {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* Float animation for cat */
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+}
+.float-anim { animation: float 4s ease-in-out infinite; }
+
+/* Blink for live indicator */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.blink { animation: blink 1.5s ease-in-out infinite; }
+
+/* Slide in */
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.slide-up { animation: slideUp 0.5s ease-out forwards; }
+
+/* Horizontal scan line sweep */
+@keyframes sweep {
+  0% { transform: translateY(-100%); opacity: 0.5; }
+  100% { transform: translateY(100vh); opacity: 0; }
+}
+
+/* Number counter */
+@keyframes countUp {
+  from { opacity: 0; transform: scale(0.8); }
+  to { opacity: 1; transform: scale(1); }
 }
