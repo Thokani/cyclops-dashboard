@@ -26,6 +26,87 @@ interface TokenData {
   positive: boolean;
 }
 
+interface ItemFloor {
+  itemId: number;
+  name: string;
+  rarity: string;
+  floorEth: number | null;
+  listings: number;
+}
+
+interface MarketData {
+  volume24h: number;
+  trades24h: number;
+  uniqueBuyers: number;
+  ethPrice: number;
+  floors: ItemFloor[];
+  dailyDeals: Array<{
+    name: string;
+    inputId: number;
+    inputAmount: number;
+    stubsReceived: number;
+    totalCost: number;
+    costPerStub: number;
+    isTradeable: boolean;
+    remaining: number;
+  }>;
+}
+
+const JUICED_HEADER = { 'X-App-Version': 'v2025-11-15-001' };
+const OUR_ITEMS = [
+  { id: 2, name: 'Dungeon Scrap' },
+  { id: 4, name: 'Bolt' },
+  { id: 8, name: 'Temporal Hourglass' },
+  { id: 265, name: 'Pike' },
+  { id: 298, name: 'Gigapengu' },
+  { id: 373, name: 'Abstract Stubs' },
+];
+
+async function fetchMarket(): Promise<MarketData> {
+  const [stats, ethResp, deals] = await Promise.all([
+    fetch('https://juiced.sh/api/global-stats/24h', { headers: JUICED_HEADER }).then(r => r.json()).catch(() => ({})),
+    fetch('https://juiced.sh/api/eth-price', { headers: JUICED_HEADER }).then(r => r.json()).catch(() => ({})),
+    fetch('https://juiced.sh/api/deals', { headers: JUICED_HEADER }).then(r => r.json()).catch(() => ({})),
+  ]);
+
+  const ethPrice = ethResp?.price ?? 0;
+
+  const floorPromises = OUR_ITEMS.map(async ({ id, name }) => {
+    try {
+      const ob = await fetch(`https://juiced.sh/api/orderbook/${id}`, { headers: JUICED_HEADER }).then(r => r.json());
+      const asks: Array<{ price: number }> = ob?.asks ?? [];
+      const floor = asks.length > 0 ? Math.min(...asks.map((a) => a.price)) : null;
+      return { itemId: id, name, rarity: '', floorEth: floor, listings: asks.length };
+    } catch {
+      return { itemId: id, name, rarity: '', floorEth: null, listings: 0 };
+    }
+  });
+  const floors = await Promise.all(floorPromises);
+
+  const dailyDeals = (deals?.daily ?? []).slice(0, 5).map((d: {
+    NAME_CID: string; inputId: number; inputAmount: number; stubsReceived: number;
+    totalCost: number; costPerStub: number; isTradeable: boolean; remainingExecutions: number;
+  }) => ({
+    name: d.NAME_CID,
+    inputId: d.inputId,
+    inputAmount: d.inputAmount,
+    stubsReceived: d.stubsReceived,
+    totalCost: d.totalCost,
+    costPerStub: d.costPerStub,
+    isTradeable: d.isTradeable,
+    remaining: d.remainingExecutions,
+  }));
+
+  return {
+    volume24h: stats?.volume ?? 0,
+    trades24h: stats?.trades ?? 0,
+    uniqueBuyers: stats?.uniqueBuyers ?? 0,
+    ethPrice,
+    floors,
+    dailyDeals,
+  };
+}
+
 async function fetchAll(): Promise<GigaData> {
   const [energy, fishing, juice, skills] = await Promise.all([
     fetch(`${BASE}/offchain/player/energy/${WALLET}`).then(r => r.json()).catch(() => ({})),
@@ -208,17 +289,19 @@ async function fetchToken(): Promise<TokenData> {
 export default function Dashboard() {
   const [data, setData] = useState<GigaData | null>(null);
   const [token, setToken] = useState<TokenData | null>(null);
+  const [market, setMarket] = useState<MarketData | null>(null);
   const [lastUpdated, setLastUpdated] = useState('');
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<'overview' | 'skills' | 'token'>('overview');
+  const [tab, setTab] = useState<'overview' | 'skills' | 'token' | 'market'>('overview');
 
   const energyAnimated = useCountUp(data?.energy.current ?? 0);
 
   async function refresh() {
     try {
-      const [d, t] = await Promise.all([fetchAll(), fetchToken()]);
+      const [d, t, m] = await Promise.all([fetchAll(), fetchToken(), fetchMarket()]);
       setData(d);
       setToken(t);
+      setMarket(m);
       setLastUpdated(new Date().toLocaleTimeString());
     } catch { /* silent */ }
     finally { setLoading(false); }
@@ -341,7 +424,7 @@ export default function Dashboard() {
         {/* ═══ TABS ═══ */}
         <div style={{ borderBottom: '1px solid #111' }}>
           <div style={{ maxWidth: '920px', margin: '0 auto', padding: '0 20px', display: 'flex', gap: '0' }}>
-            {(['overview', 'skills', 'token'] as const).map(t => (
+            {(['overview', 'skills', 'token', 'market'] as const).map(t => (
               <button key={t} onClick={() => setTab(t)} style={{
                 background: 'none', border: 'none', cursor: 'pointer',
                 padding: '14px 20px', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.1em',
@@ -353,7 +436,7 @@ export default function Dashboard() {
                 onMouseOver={e => { if (tab !== t) (e.currentTarget as HTMLElement).style.color = '#9ca3af'; }}
                 onMouseOut={e => { if (tab !== t) (e.currentTarget as HTMLElement).style.color = '#4b5563'; }}
               >
-                {t === 'overview' ? '⚔️ Overview' : t === 'skills' ? '📈 Skills' : '🐱 $CYCLOPS'}
+                {t === 'overview' ? '⚔️ Overview' : t === 'skills' ? '📈 Skills' : t === 'token' ? '🐱 $CYCLOPS' : '🏪 Market'}
               </button>
             ))}
           </div>
@@ -610,6 +693,105 @@ export default function Dashboard() {
                       <div style={{ fontSize: '10px', color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{label}</div>
                     </div>
                   ))}
+                </div>
+              </Card>
+            </>
+          )}
+
+          {tab === 'market' && (
+            <>
+              {/* Market overview */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px' }}>
+                <Card delay={0}>
+                  <p style={s.label()}>📊 24h Volume</p>
+                  <span style={s.bignum('#60a5fa')}>
+                    {market ? `${market.volume24h.toFixed(3)} ETH` : '—'}
+                  </span>
+                  <p style={{ ...s.muted(), marginTop: '8px' }}>
+                    {market ? `$${(market.volume24h * market.ethPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : ''}
+                  </p>
+                </Card>
+                <Card delay={70}>
+                  <p style={s.label()}>🔄 Trades</p>
+                  <span style={s.bignum('#a78bfa')}>{market?.trades24h.toLocaleString() ?? '—'}</span>
+                  <p style={{ ...s.muted(), marginTop: '8px' }}>{market?.uniqueBuyers.toLocaleString()} buyers</p>
+                </Card>
+                <Card delay={140}>
+                  <p style={s.label()}>💰 ETH Price</p>
+                  <span style={s.bignum('#4ade80')}>
+                    {market ? `$${market.ethPrice.toLocaleString()}` : '—'}
+                  </span>
+                  <p style={{ ...s.muted(), marginTop: '8px' }}>via juiced.sh</p>
+                </Card>
+              </div>
+
+              {/* Our item floors */}
+              <Card delay={200}>
+                <p style={s.label()}>🎒 Our Items — Floor Prices</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
+                  {market ? market.floors.map((item, i) => (
+                    <div key={item.itemId} style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      padding: '10px 0',
+                      borderBottom: i < market.floors.length - 1 ? '1px solid #111' : 'none',
+                    }}>
+                      <div>
+                        <span style={{ fontSize: '13px', color: '#9ca3af' }}>{item.name}</span>
+                        <span style={{ fontSize: '10px', color: '#4b5563', marginLeft: '8px' }}>#{item.itemId}</span>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        {item.floorEth !== null ? (
+                          <>
+                            <div style={{ fontSize: '14px', fontWeight: 700, color: '#f97316' }}>
+                              {item.floorEth.toFixed(6)} ETH
+                            </div>
+                            <div style={{ fontSize: '10px', color: '#4b5563' }}>
+                              ${(item.floorEth * (market.ethPrice || 2000)).toFixed(4)} · {item.listings} listing{item.listings !== 1 ? 's' : ''}
+                            </div>
+                          </>
+                        ) : (
+                          <span style={{ fontSize: '12px', color: '#374151' }}>no listings</span>
+                        )}
+                      </div>
+                    </div>
+                  )) : (
+                    <p style={{ color: '#4b5563', fontSize: '13px' }}>Loading...</p>
+                  )}
+                </div>
+              </Card>
+
+              {/* Daily deals */}
+              <Card delay={280}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                  <p style={{ ...s.label(), margin: 0 }}>📋 Today&apos;s Deals</p>
+                  <a href="https://juiced.sh" target="_blank" rel="noopener noreferrer" style={{ fontSize: '10px', color: '#f9731666', textDecoration: 'none' }}>juiced.sh ↗</a>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
+                  {market && market.dailyDeals.length > 0 ? market.dailyDeals.map((deal, i) => (
+                    <div key={deal.name} style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      padding: '10px 0',
+                      borderBottom: i < market.dailyDeals.length - 1 ? '1px solid #111' : 'none',
+                    }}>
+                      <div>
+                        <div style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '2px' }}>{deal.name}</div>
+                        <div style={{ fontSize: '10px', color: '#4b5563' }}>
+                          {deal.inputAmount}x item #{deal.inputId} → {deal.stubsReceived} stubs
+                          {!deal.isTradeable && <span style={{ color: '#374151', marginLeft: '6px' }}>· not tradeable</span>}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '13px', fontWeight: 700, color: deal.isTradeable ? '#4ade80' : '#374151' }}>
+                          {deal.isTradeable ? `${deal.totalCost.toFixed(5)} ETH` : 'free'}
+                        </div>
+                        <div style={{ fontSize: '10px', color: '#4b5563' }}>
+                          {deal.remaining} run{deal.remaining !== 1 ? 's' : ''} left
+                        </div>
+                      </div>
+                    </div>
+                  )) : (
+                    <p style={{ color: '#4b5563', fontSize: '13px' }}>{market ? 'No active deals' : 'Loading...'}</p>
+                  )}
                 </div>
               </Card>
             </>
