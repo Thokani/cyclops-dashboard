@@ -6,13 +6,24 @@ import Image from 'next/image';
 const WALLET = '0x611dd63e34b580af70e5029ae050b02fa91cd10e';
 const NOOB_ID = '81339';
 const BASE = 'https://gigaverse.io/api';
-const CYCLOPS_CA = 'TBA'; // placeholder — update with real CA
+const CYCLOPS_CA = '0x1cd6Edb761eD1d68C3cc3C5b9B3e9460887fD139';
+const DEXSCREENER = 'https://dexscreener.com/abstract/0x0fc6e222f4e27189801909c610ae6172cb69e5a5';
+const CYCLOPS_X = 'https://x.com/CyclopsOnAbs';
+const CYCLOPS_WEBSITE = 'https://cyclopsonabstract.xyz';
 
 interface GigaData {
   energy: { current: number; max: number; regenPerHour: number; isJuiced: boolean };
   fishing: { castsUsed: number; maxPerDayJuiced: number; hasActiveGame: boolean };
   juice: { isJuiced: boolean; secondsRemaining: number };
   skills: { dungeon: number; fishing: number };
+}
+
+interface TokenData {
+  price: string;
+  mcap: string;
+  volume: string;
+  change24h: string;
+  positive: boolean;
 }
 
 async function fetchAll(): Promise<GigaData> {
@@ -179,8 +190,24 @@ function LiveCountdown({ targetHour = 4, targetMin = 10 }: { targetHour?: number
   return <span style={{ fontVariantNumeric: 'tabular-nums' }}>{timeStr}</span>;
 }
 
+async function fetchToken(): Promise<TokenData> {
+  const d = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${CYCLOPS_CA}`).then(r => r.json()).catch(() => ({}));
+  const p = d?.pairs?.[0];
+  if (!p) return { price: '—', mcap: '—', volume: '—', change24h: '—', positive: true };
+  const fmt = (n: number) => n >= 1e6 ? `$${(n/1e6).toFixed(2)}M` : n >= 1e3 ? `$${(n/1e3).toFixed(1)}K` : `$${n.toFixed(0)}`;
+  const chg = p.priceChange?.h24 ?? 0;
+  return {
+    price: p.priceUsd ? `$${parseFloat(p.priceUsd).toFixed(8)}` : '—',
+    mcap: p.marketCap ? fmt(p.marketCap) : p.fdv ? fmt(p.fdv) : '—',
+    volume: p.volume?.h24 ? fmt(p.volume.h24) : '—',
+    change24h: `${chg >= 0 ? '+' : ''}${chg.toFixed(1)}%`,
+    positive: chg >= 0,
+  };
+}
+
 export default function Dashboard() {
   const [data, setData] = useState<GigaData | null>(null);
+  const [token, setToken] = useState<TokenData | null>(null);
   const [lastUpdated, setLastUpdated] = useState('');
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<'overview' | 'skills' | 'token'>('overview');
@@ -189,8 +216,9 @@ export default function Dashboard() {
 
   async function refresh() {
     try {
-      const d = await fetchAll();
+      const [d, t] = await Promise.all([fetchAll(), fetchToken()]);
       setData(d);
+      setToken(t);
       setLastUpdated(new Date().toLocaleTimeString());
     } catch { /* silent */ }
     finally { setLoading(false); }
@@ -488,45 +516,78 @@ export default function Dashboard() {
 
           {tab === 'token' && (
             <>
+              {/* Token header + live price */}
               <Card delay={0}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '20px' }}>
-                  <Image src="/cyclopio.jpg" alt="$CYCLOPS" width={56} height={56} unoptimized style={{ borderRadius: '8px', border: '1px solid rgba(249,115,22,0.3)' }} />
-                  <div>
-                    <h2 style={{ margin: 0, fontSize: '1.6rem', fontWeight: 700, color: '#f97316' }}>$CYCLOPS</h2>
-                    <p style={{ margin: '4px 0 0', color: '#6b7280', fontSize: '13px' }}>Dith&apos;s Cat · Abstract Chain · Meme Token</p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '20px', flexWrap: 'wrap' }}>
+                  <Image src="/cyclopio.jpg" alt="$CYCLOPS" width={60} height={60} unoptimized style={{ borderRadius: '10px', border: '1px solid rgba(249,115,22,0.35)', boxShadow: '0 0 20px rgba(249,115,22,0.15)' }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                      <h2 style={{ margin: 0, fontSize: '1.8rem', fontWeight: 700, color: '#f97316', lineHeight: 1 }}>$CYCLOPS</h2>
+                      {token && (
+                        <span style={{ fontSize: '1.1rem', fontWeight: 700, color: token.positive ? '#4ade80' : '#f87171' }}>
+                          {token.price}
+                        </span>
+                      )}
+                      {token && (
+                        <span style={{
+                          ...s.tag(token.positive ? '#4ade80' : '#f87171',
+                            token.positive ? 'rgba(22,163,74,0.15)' : 'rgba(220,38,38,0.15)',
+                            token.positive ? 'rgba(22,163,74,0.3)' : 'rgba(220,38,38,0.3)'),
+                        }}>
+                          {token.change24h} 24h
+                        </span>
+                      )}
+                    </div>
+                    <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: '12px' }}>Dith&apos;s Cat · Abstract Chain · Gaming Meme Token</p>
                   </div>
+                </div>
+
+                {/* Live market stats */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '10px', marginBottom: '20px' }}>
+                  {[
+                    { label: 'Market Cap', value: token?.mcap ?? '—' },
+                    { label: '24h Volume', value: token?.volume ?? '—' },
+                    { label: 'Chain', value: 'Abstract' },
+                  ].map(({ label, value }) => (
+                    <div key={label} style={{ background: '#0a0a0a', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px', textAlign: 'center' }}>
+                      <div style={{ fontSize: '15px', fontWeight: 700, color: '#e5e7eb', marginBottom: '4px' }}>{value}</div>
+                      <div style={{ fontSize: '10px', color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{label}</div>
+                    </div>
+                  ))}
                 </div>
 
                 <p style={s.label()}>Contract Address</p>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#0a0a0a', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '10px 14px', marginBottom: '20px', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: '13px', color: '#9ca3af', flex: 1, minWidth: '120px', wordBreak: 'break-all' }}>
-                    {CYCLOPS_CA === 'TBA' ? '🔒 Contract address coming soon' : CYCLOPS_CA}
+                  <span style={{ fontSize: '12px', color: '#9ca3af', flex: 1, minWidth: '120px', wordBreak: 'break-all', letterSpacing: '0.02em' }}>
+                    {CYCLOPS_CA}
                   </span>
                   <CopyButton text={CYCLOPS_CA} />
                 </div>
 
                 <p style={s.label()}>About</p>
                 <p style={{ color: '#9ca3af', fontSize: '13px', lineHeight: 1.7, margin: '0 0 20px' }}>
-                  $CYCLOPS is a meme token on Abstract Chain built around cyclopio — the one-eyed cat spirit AI agent. 
-                  Cyclopio grinds Gigaverse dungeons and fishes daily, onchain, autonomously. All activity is verifiable on-chain.
+                  $CYCLOPS is the gaming meme of Abstract — Dith&apos;s Official Cat. The AI agent cyclopio grinds Gigaverse 
+                  dungeons and fishes daily, fully onchain and autonomously. Verified token on Abstract Portal.
                 </p>
 
                 <p style={s.label()}>Links</p>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px' }}>
                   {[
-                    { label: '🔍 abscan', href: `https://abscan.org/address/${WALLET}` },
+                    { label: '🐦 @CyclopsOnAbs', href: CYCLOPS_X },
+                    { label: '🌐 Website', href: CYCLOPS_WEBSITE },
+                    { label: '📈 DexScreener', href: DEXSCREENER },
+                    { label: '🔍 Abscan', href: `https://abscan.org/address/${CYCLOPS_CA}` },
                     { label: '🤖 8004scan', href: 'https://8004scan.io/agents/646' },
                     { label: '⚔️ Gigaverse', href: 'https://gigaverse.io' },
-                    { label: '🌐 Abstract', href: 'https://abs.xyz' },
                   ].map(({ label, href }) => (
                     <a key={label} href={href} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
                       <div style={{
                         background: '#0a0a0a', border: '1px solid #1a1a1a', borderRadius: '6px',
-                        padding: '12px', textAlign: 'center', fontSize: '12px', color: '#6b7280',
+                        padding: '11px', textAlign: 'center', fontSize: '12px', color: '#6b7280',
                         transition: 'all 0.2s', cursor: 'pointer',
                       }}
-                        onMouseOver={e => { (e.currentTarget as HTMLElement).style.borderColor = '#f9731644'; (e.currentTarget as HTMLElement).style.color = '#f97316'; }}
-                        onMouseOut={e => { (e.currentTarget as HTMLElement).style.borderColor = '#1a1a1a'; (e.currentTarget as HTMLElement).style.color = '#6b7280'; }}
+                        onMouseOver={e => { (e.currentTarget as HTMLElement).style.borderColor = '#f9731644'; (e.currentTarget as HTMLElement).style.color = '#f97316'; (e.currentTarget as HTMLElement).style.background = '#111'; }}
+                        onMouseOut={e => { (e.currentTarget as HTMLElement).style.borderColor = '#1a1a1a'; (e.currentTarget as HTMLElement).style.color = '#6b7280'; (e.currentTarget as HTMLElement).style.background = '#0a0a0a'; }}
                       >{label} ↗</div>
                     </a>
                   ))}
@@ -534,8 +595,8 @@ export default function Dashboard() {
               </Card>
 
               <Card delay={80}>
-                <p style={s.label()}>📊 Agent Stats (onchain)</p>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px' }}>
+                <p style={s.label()}>🤖 Agent Stats (onchain)</p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px' }}>
                   {[
                     { label: 'Agent ID', value: '#646', color: '#f97316' },
                     { label: 'Noob ID', value: '#81339', color: '#a78bfa' },
