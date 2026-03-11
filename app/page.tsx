@@ -1,22 +1,18 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import Image from 'next/image';
 
 const WALLET = '0x611dd63e34b580af70e5029ae050b02fa91cd10e';
 const NOOB_ID = '81339';
 const BASE = 'https://gigaverse.io/api';
-
-interface EnergyData { current: number; max: number; regenPerHour: number; isJuiced: boolean }
-interface FishingData { castsUsed: number; maxPerDayJuiced: number; hasActiveGame: boolean }
-interface JuiceData { isJuiced: boolean; secondsRemaining: number }
-interface SkillsData { dungeon: number; fishing: number }
+const CYCLOPS_CA = 'TBA'; // placeholder — update with real CA
 
 interface GigaData {
-  energy: EnergyData;
-  fishing: FishingData;
-  juice: JuiceData;
-  skills: SkillsData;
+  energy: { current: number; max: number; regenPerHour: number; isJuiced: boolean };
+  fishing: { castsUsed: number; maxPerDayJuiced: number; hasActiveGame: boolean };
+  juice: { isJuiced: boolean; secondsRemaining: number };
+  skills: { dungeon: number; fishing: number };
 }
 
 async function fetchAll(): Promise<GigaData> {
@@ -26,13 +22,11 @@ async function fetchAll(): Promise<GigaData> {
     fetch(`${BASE}/gigajuice/player/${WALLET}`).then(r => r.json()).catch(() => ({})),
     fetch(`${BASE}/offchain/skills/progress/${NOOB_ID}`).then(r => r.json()).catch(() => ({})),
   ]);
-
   const ep = energy?.entities?.[0]?.parsedData ?? {};
-  const skillDocs: Array<{SKILL_CID: number; LEVEL_CID: number}> = skills?.entities ?? [];
-
+  const skillDocs: Array<{ SKILL_CID: number; LEVEL_CID: number }> = skills?.entities ?? [];
   return {
     energy: {
-      current: ep.energyValue ?? 0,
+      current: Math.round(ep.energyValue ?? 0),
       max: ep.maxEnergy ?? 420,
       regenPerHour: ep.regenPerHour ?? 17.5,
       isJuiced: ep.isPlayerJuiced ?? false,
@@ -53,65 +47,153 @@ async function fetchAll(): Promise<GigaData> {
   };
 }
 
-function Bar({ value, max, color }: { value: number; max: number; color: string }) {
+function useCountUp(target: number, duration = 800) {
+  const [val, setVal] = useState(0);
+  useEffect(() => {
+    if (target === 0) { setVal(0); return; }
+    const start = Date.now();
+    const timer = setInterval(() => {
+      const progress = Math.min(1, (Date.now() - start) / duration);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setVal(Math.round(eased * target));
+      if (progress >= 1) clearInterval(timer);
+    }, 16);
+    return () => clearInterval(timer);
+  }, [target, duration]);
+  return val;
+}
+
+function Bar({ value, max, color, glow }: { value: number; max: number; color: string; glow: string }) {
   const pct = Math.min(100, Math.max(0, max > 0 ? (value / max) * 100 : 0));
   return (
-    <div style={{ width: '100%', height: '6px', background: '#0a0a0a', borderRadius: '2px', overflow: 'hidden', border: '1px solid #1a1a1a' }}>
+    <div style={{ width: '100%', height: '6px', background: '#0a0a0a', borderRadius: '3px', overflow: 'hidden', border: '1px solid #1a1a1a', position: 'relative' }}>
       <div style={{
-        height: '100%',
-        width: `${pct}%`,
-        background: color,
-        borderRadius: '2px',
-        transition: 'width 1s ease',
-        boxShadow: `0 0 8px ${color}66`,
-      }} />
+        height: '100%', width: `${pct}%`, background: color,
+        borderRadius: '3px', transition: 'width 1.2s cubic-bezier(0.34,1.56,0.64,1)',
+        boxShadow: `0 0 10px ${glow}`,
+        position: 'relative',
+      }}>
+        {pct > 5 && (
+          <div style={{
+            position: 'absolute', right: 0, top: 0, bottom: 0, width: '20px',
+            background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.15))',
+          }} />
+        )}
+      </div>
     </div>
   );
 }
 
-function StatCard({ children, delay = 0 }: { children: React.ReactNode; delay?: number }) {
-  return (
-    <div style={{
-      background: '#0d0d0d',
-      border: '1px solid #1c1c1c',
-      borderRadius: '8px',
-      padding: '20px',
-      position: 'relative',
-      overflow: 'hidden',
-      animation: `slideUp 0.4s ease-out ${delay}ms both`,
-    }}>
-      <div style={{ position: 'absolute', top: 0, left: 0, width: 12, height: 12, borderTop: '1px solid #f9731644', borderLeft: '1px solid #f9731644' }} />
-      <div style={{ position: 'absolute', top: 0, right: 0, width: 12, height: 12, borderTop: '1px solid #f9731644', borderRight: '1px solid #f9731644' }} />
-      <div style={{ position: 'absolute', bottom: 0, left: 0, width: 12, height: 12, borderBottom: '1px solid #f9731644', borderLeft: '1px solid #f9731644' }} />
-      <div style={{ position: 'absolute', bottom: 0, right: 0, width: 12, height: 12, borderBottom: '1px solid #f9731644', borderRight: '1px solid #f9731644' }} />
+function Card({ children, delay = 0, onClick, href }: {
+  children: React.ReactNode; delay?: number;
+  onClick?: () => void; href?: string;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const el = (
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onClick={onClick}
+      style={{
+        background: hovered ? '#111' : '#0d0d0d',
+        border: `1px solid ${hovered ? '#2a2a2a' : '#1c1c1c'}`,
+        borderRadius: '10px', padding: '20px', position: 'relative', overflow: 'hidden',
+        animation: `slideUp 0.4s ease-out ${delay}ms both`,
+        cursor: onClick || href ? 'pointer' : 'default',
+        transform: hovered ? 'translateY(-2px)' : 'translateY(0)',
+        transition: 'all 0.2s ease',
+        boxShadow: hovered ? '0 8px 32px rgba(0,0,0,0.5)' : '0 2px 8px rgba(0,0,0,0.3)',
+      }}
+    >
+      {/* Corner accents */}
+      {['top-left','top-right','bottom-left','bottom-right'].map(pos => (
+        <div key={pos} style={{
+          position: 'absolute',
+          top: pos.includes('top') ? 0 : 'auto',
+          bottom: pos.includes('bottom') ? 0 : 'auto',
+          left: pos.includes('left') ? 0 : 'auto',
+          right: pos.includes('right') ? 0 : 'auto',
+          width: 12, height: 12,
+          borderTop: pos.includes('top') ? `1px solid ${hovered ? '#f9731666' : '#f9731633'}` : 'none',
+          borderBottom: pos.includes('bottom') ? `1px solid ${hovered ? '#f9731666' : '#f9731633'}` : 'none',
+          borderLeft: pos.includes('left') ? `1px solid ${hovered ? '#f9731666' : '#f9731633'}` : 'none',
+          borderRight: pos.includes('right') ? `1px solid ${hovered ? '#f9731666' : '#f9731633'}` : 'none',
+          transition: 'border-color 0.2s',
+        }} />
+      ))}
+      {/* Subtle top gradient on hover */}
+      {hovered && (
+        <div style={{
+          position: 'absolute', top: 0, left: 0, right: 0, height: '1px',
+          background: 'linear-gradient(90deg, transparent, #f9731644, transparent)',
+        }} />
+      )}
       {children}
     </div>
   );
+  if (href) return <a href={href} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', display: 'block' }}>{el}</a>;
+  return el;
 }
 
-const Label = ({ children }: { children: React.ReactNode }) => (
-  <p style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.18em', color: '#4b5563', marginBottom: '10px', margin: '0 0 10px 0' }}>{children}</p>
-);
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = useCallback(() => {
+    if (text === 'TBA') return;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [text]);
+  return (
+    <button onClick={copy} style={{
+      background: copied ? 'rgba(34,197,94,0.15)' : 'rgba(249,115,22,0.1)',
+      border: `1px solid ${copied ? 'rgba(34,197,94,0.3)' : 'rgba(249,115,22,0.2)'}`,
+      color: copied ? '#4ade80' : '#f97316', borderRadius: '4px',
+      padding: '3px 10px', fontSize: '11px', cursor: 'pointer',
+      letterSpacing: '0.05em', transition: 'all 0.2s',
+      fontFamily: "'Courier New', monospace",
+    }}>
+      {copied ? '✓ copied' : 'copy'}
+    </button>
+  );
+}
 
-const BigNum = ({ children, color = '#f97316' }: { children: React.ReactNode; color?: string }) => (
-  <span style={{ fontSize: '2rem', fontWeight: 700, color, lineHeight: 1 }}>{children}</span>
-);
+function LiveCountdown({ targetHour = 4, targetMin = 10 }: { targetHour?: number; targetMin?: number }) {
+  const [timeStr, setTimeStr] = useState('');
+  useEffect(() => {
+    function update() {
+      const now = new Date();
+      const next = new Date(now);
+      next.setUTCHours(targetHour, targetMin, 0, 0);
+      if (next.getTime() <= now.getTime()) next.setUTCDate(next.getUTCDate() + 1);
+      const diff = next.getTime() - now.getTime();
+      const h = Math.floor(diff / 3600000);
+      const m = Math.floor((diff % 3600000) / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      setTimeStr(`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`);
+    }
+    update();
+    const t = setInterval(update, 1000);
+    return () => clearInterval(t);
+  }, [targetHour, targetMin]);
+  return <span style={{ fontVariantNumeric: 'tabular-nums' }}>{timeStr}</span>;
+}
 
 export default function Dashboard() {
   const [data, setData] = useState<GigaData | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<string>('');
+  const [lastUpdated, setLastUpdated] = useState('');
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<'overview' | 'skills' | 'token'>('overview');
+
+  const energyAnimated = useCountUp(data?.energy.current ?? 0);
 
   async function refresh() {
     try {
       const d = await fetchAll();
       setData(d);
       setLastUpdated(new Date().toLocaleTimeString());
-    } catch {
-      // silent fail
-    } finally {
-      setLoading(false);
-    }
+    } catch { /* silent */ }
+    finally { setLoading(false); }
   }
 
   useEffect(() => {
@@ -120,81 +202,107 @@ export default function Dashboard() {
     return () => clearInterval(t);
   }, []);
 
-  const juiceDays = data ? Math.floor(data.juice.secondsRemaining / 86400) : 0;
-
-  function forecastTime(target: number): string {
+  function forecastTime(target: number) {
     if (!data) return '—';
     const { current, regenPerHour: rph } = data.energy;
     if (current >= target) return '✓ READY';
-    const hrs = Math.floor((target - current) / rph);
-    const mins = Math.round(((target - current) / rph - hrs) * 60);
-    return hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+    const mins = Math.ceil((target - current) / rph * 60);
+    const h = Math.floor(mins / 60), m = mins % 60;
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
   }
+
+  const juiceDays = data ? Math.floor(data.juice.secondsRemaining / 86400) : 0;
+
+  const s = {
+    label: (extra?: React.CSSProperties): React.CSSProperties => ({
+      fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.18em',
+      color: '#4b5563', margin: '0 0 10px 0', ...extra,
+    }),
+    bignum: (color = '#f97316'): React.CSSProperties => ({
+      fontSize: '2.2rem', fontWeight: 700, color, lineHeight: 1,
+    }),
+    muted: (extra?: React.CSSProperties): React.CSSProperties => ({
+      fontSize: '11px', color: '#374151', margin: 0, ...extra,
+    }),
+    tag: (color = '#f97316', bg = 'rgba(67,20,7,0.4)', border = 'rgba(124,45,18,0.5)'): React.CSSProperties => ({
+      fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.12em',
+      padding: '3px 10px', borderRadius: '4px', border: `1px solid ${border}`,
+      background: bg, color, display: 'inline-block',
+    }),
+  } as const;
 
   return (
     <>
-      {/* Scanlines */}
       <div style={{
         position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 50,
-        backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.04) 2px, rgba(0,0,0,0.04) 4px)'
+        backgroundImage: 'repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.03) 2px,rgba(0,0,0,0.03) 4px)',
       }} />
 
       <main style={{ minHeight: '100vh', background: '#080808', color: '#fff', fontFamily: "'Courier New', monospace" }}>
 
-        {/* HERO */}
+        {/* ═══ HERO ═══ */}
         <div style={{ borderBottom: '1px solid #111', position: 'relative', overflow: 'hidden' }}>
-          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(135deg, rgba(124,45,18,0.08) 0%, transparent 60%)', pointerEvents: 'none' }} />
-          <div style={{ maxWidth: '900px', margin: '0 auto', padding: '28px 24px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+          <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse 600px 300px at 80% 50%, rgba(124,45,18,0.08) 0%, transparent 70%)', pointerEvents: 'none' }} />
+          <div style={{ position: 'absolute', top: '-60px', right: '-60px', width: '300px', height: '300px', background: 'rgba(249,115,22,0.04)', borderRadius: '50%', filter: 'blur(60px)', pointerEvents: 'none' }} />
+
+          <div style={{ maxWidth: '920px', margin: '0 auto', padding: '28px 20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
 
               {/* Avatar */}
               <div style={{ position: 'relative', flexShrink: 0, animation: 'float 4s ease-in-out infinite' }}>
-                <div style={{ position: 'absolute', inset: '-8px', background: 'rgba(249,115,22,0.12)', borderRadius: '16px', filter: 'blur(16px)' }} />
-                <Image
-                  src="/cyclopio.jpg"
-                  alt="cyclopio"
-                  width={96}
-                  height={96}
-                  unoptimized
-                  style={{ borderRadius: '12px', position: 'relative', border: '1px solid rgba(124,45,18,0.5)', imageRendering: 'pixelated' }}
-                />
+                <div style={{ position: 'absolute', inset: '-12px', background: 'rgba(249,115,22,0.1)', borderRadius: '20px', filter: 'blur(20px)' }} />
+                <div style={{ position: 'relative', borderRadius: '14px', overflow: 'hidden', border: '1px solid rgba(249,115,22,0.25)', boxShadow: '0 0 30px rgba(249,115,22,0.15)' }}>
+                  <Image src="/cyclopio.jpg" alt="cyclopio" width={100} height={100} unoptimized style={{ display: 'block', imageRendering: 'pixelated' }} />
+                </div>
                 {data?.juice.isJuiced && (
-                  <span style={{ position: 'absolute', bottom: '-6px', right: '-6px', fontSize: '16px' }}>🍹</span>
+                  <span style={{ position: 'absolute', bottom: '-8px', right: '-8px', fontSize: '18px', filter: 'drop-shadow(0 0 4px rgba(249,115,22,0.5))' }}>🍹</span>
                 )}
               </div>
 
               {/* Identity */}
-              <div style={{ flex: 1 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                  <h1 style={{ margin: 0, fontSize: '2rem', fontWeight: 700, color: '#f97316', textShadow: '0 0 30px rgba(249,115,22,0.5)', letterSpacing: '-0.02em' }}>
+              <div style={{ flex: 1, minWidth: '200px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '6px' }}>
+                  <h1 style={{ margin: 0, fontSize: '2.4rem', fontWeight: 700, color: '#f97316', textShadow: '0 0 40px rgba(249,115,22,0.4)', letterSpacing: '-0.03em', lineHeight: 1 }}>
                     cyclopio
                   </h1>
-                  <span style={{ fontSize: '1.5rem' }}>👁️</span>
-                  {data?.juice.isJuiced && (
-                    <span style={{ fontSize: '10px', padding: '2px 8px', border: '1px solid rgba(124,45,18,0.6)', background: 'rgba(67,20,7,0.4)', color: '#f97316', borderRadius: '4px', textTransform: 'uppercase', letterSpacing: '0.15em' }}>
-                      Juiced
-                    </span>
-                  )}
+                  <span style={{ fontSize: '1.8rem', filter: 'drop-shadow(0 0 8px rgba(249,115,22,0.5))' }}>👁️</span>
+                  {data?.juice.isJuiced && <span style={s.tag()}>⚡ Juiced</span>}
+                  <span style={s.tag('#a78bfa', 'rgba(76,29,149,0.3)', 'rgba(109,40,217,0.4)')}>Summoner</span>
                 </div>
-                <p style={{ margin: '4px 0 8px', color: '#4b5563', fontSize: '13px' }}>AI Agent · Dungeon Runner · Abstract Chain</p>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0 16px', fontSize: '11px', color: '#374151' }}>
-                  <a href="https://abscan.org/address/0x611dD63e34B580Af70E5029aE050B02Fa91cd10e" target="_blank" style={{ color: 'inherit', textDecoration: 'none' }} onMouseOver={e => (e.currentTarget.style.color = '#f97316')} onMouseOut={e => (e.currentTarget.style.color = '#374151')}>0x611d…d10e ↗</a>
-                  <a href="https://8004scan.io/agent/646" target="_blank" style={{ color: 'inherit', textDecoration: 'none' }} onMouseOver={e => (e.currentTarget.style.color = '#f97316')} onMouseOut={e => (e.currentTarget.style.color = '#374151')}>Agent #646 ↗</a>
-                  <span>Noob #81339 · Lv1 · Summoner</span>
+                <p style={{ margin: '0 0 10px', color: '#6b7280', fontSize: '13px' }}>
+                  AI Agent · Abstract Chain · Gigaverse Dungeon Runner
+                </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0 16px', fontSize: '11px' }}>
+                  {[
+                    { label: '0x611d…d10e', href: `https://abscan.org/address/${WALLET}` },
+                    { label: 'Agent #646', href: 'https://8004scan.io/agents/646' },
+                    { label: 'Noob #81339 · Lv1', href: 'https://gigaverse.io' },
+                  ].map(({ label, href }) => (
+                    <a key={label} href={href} target="_blank" rel="noopener noreferrer" style={{ color: '#4b5563', textDecoration: 'none', transition: 'color 0.15s' }}
+                      onMouseOver={e => (e.currentTarget.style.color = '#f97316')}
+                      onMouseOut={e => (e.currentTarget.style.color = '#4b5563')}
+                    >{label} ↗</a>
+                  ))}
                 </div>
               </div>
 
-              {/* Live indicator */}
-              <div style={{ textAlign: 'right', flexShrink: 0 }}>
+              {/* Live + Next cron */}
+              <div style={{ textAlign: 'right', flexShrink: 0, minWidth: '120px' }}>
                 {loading ? (
                   <span style={{ fontSize: '11px', color: '#7c2d12', animation: 'blink 1.5s ease-in-out infinite' }}>connecting...</span>
                 ) : (
                   <>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'flex-end', marginBottom: '4px' }}>
-                      <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#f97316', display: 'inline-block', animation: 'blink 1.5s ease-in-out infinite' }} />
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px', marginBottom: '4px' }}>
+                      <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#f97316', display: 'inline-block', animation: 'pulse-dot 2s ease-in-out infinite' }} />
                       <span style={{ fontSize: '11px', color: '#f97316', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.15em' }}>Live</span>
                     </div>
-                    <div style={{ fontSize: '11px', color: '#374151' }}>{lastUpdated}</div>
+                    <div style={{ fontSize: '10px', color: '#374151' }}>{lastUpdated}</div>
+                    <div style={{ marginTop: '8px', fontSize: '10px', color: '#374151' }}>
+                      Next grind in<br />
+                      <span style={{ color: '#f97316', fontWeight: 700, fontSize: '13px' }}>
+                        <LiveCountdown targetHour={4} targetMin={10} />
+                      </span>
+                    </div>
                   </>
                 )}
               </div>
@@ -202,126 +310,266 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* CONTENT */}
-        <div style={{ maxWidth: '900px', margin: '0 auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-
-          {/* 4 stat cards */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
-
-            <StatCard delay={0}>
-              <Label>⚡ Energy</Label>
-              <div style={{ marginBottom: '12px' }}>
-                <BigNum>{data?.energy.current ?? '—'}</BigNum>
-                <span style={{ color: '#374151', fontSize: '13px' }}> / {data?.energy.max ?? 420}</span>
-              </div>
-              <Bar value={data?.energy.current ?? 0} max={data?.energy.max ?? 420} color="#f97316" />
-              <p style={{ marginTop: '8px', fontSize: '11px', color: '#4b5563', margin: '8px 0 0' }}>+{data?.energy.regenPerHour ?? 17.5}/hr regen</p>
-            </StatCard>
-
-            <StatCard delay={80}>
-              <Label>⚔️ Dungeon Runs</Label>
-              <div style={{ marginBottom: '12px' }}>
-                <BigNum color="#f87171">0</BigNum>
-                <span style={{ color: '#374151', fontSize: '13px' }}> / 12</span>
-              </div>
-              <Bar value={0} max={12} color="#dc2626" />
-              <p style={{ marginTop: '8px', fontSize: '11px', color: '#4b5563', margin: '8px 0 0' }}>12 runs/day (juiced)</p>
-            </StatCard>
-
-            <StatCard delay={160}>
-              <Label>🎣 Fishing</Label>
-              <div style={{ marginBottom: '12px' }}>
-                <BigNum color="#4ade80">{data?.fishing.castsUsed ?? '—'}</BigNum>
-                <span style={{ color: '#374151', fontSize: '13px' }}> / {data?.fishing.maxPerDayJuiced ?? 20}</span>
-              </div>
-              <Bar value={data?.fishing.castsUsed ?? 0} max={data?.fishing.maxPerDayJuiced ?? 20} color="#16a34a" />
-              <p style={{ marginTop: '8px', fontSize: '11px', color: '#4b5563', margin: '8px 0 0' }}>
-                {data ? data.fishing.maxPerDayJuiced - data.fishing.castsUsed : '—'} casts left
-                {data?.fishing.hasActiveGame && <span style={{ color: '#4ade80', marginLeft: '6px' }}>● active</span>}
-              </p>
-            </StatCard>
-
-            <StatCard delay={240}>
-              <Label>🍹 GigaJuice</Label>
-              <div style={{ marginBottom: '12px' }}>
-                <BigNum color={data?.juice.isJuiced ? '#facc15' : '#374151'}>
-                  {data?.juice.isJuiced ? `${juiceDays}d` : 'OFF'}
-                </BigNum>
-              </div>
-              <div style={{
-                fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.12em',
-                padding: '4px 8px', borderRadius: '4px', display: 'inline-block',
-                background: data?.juice.isJuiced ? 'rgba(78,52,0,0.4)' : '#111',
-                border: `1px solid ${data?.juice.isJuiced ? 'rgba(113,63,18,0.5)' : '#222'}`,
-                color: data?.juice.isJuiced ? '#facc15' : '#374151',
-              }}>
-                {data?.juice.isJuiced ? '● 30-day box active' : '○ not active'}
-              </div>
-            </StatCard>
+        {/* ═══ TABS ═══ */}
+        <div style={{ borderBottom: '1px solid #111' }}>
+          <div style={{ maxWidth: '920px', margin: '0 auto', padding: '0 20px', display: 'flex', gap: '0' }}>
+            {(['overview', 'skills', 'token'] as const).map(t => (
+              <button key={t} onClick={() => setTab(t)} style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                padding: '14px 20px', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.1em',
+                color: tab === t ? '#f97316' : '#4b5563',
+                borderBottom: `2px solid ${tab === t ? '#f97316' : 'transparent'}`,
+                fontFamily: "'Courier New', monospace",
+                transition: 'all 0.2s',
+              }}
+                onMouseOver={e => { if (tab !== t) (e.currentTarget as HTMLElement).style.color = '#9ca3af'; }}
+                onMouseOut={e => { if (tab !== t) (e.currentTarget as HTMLElement).style.color = '#4b5563'; }}
+              >
+                {t === 'overview' ? '⚔️ Overview' : t === 'skills' ? '📈 Skills' : '🐱 $CYCLOPS'}
+              </button>
+            ))}
           </div>
+        </div>
 
-          {/* Skills + Forecast */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '12px' }}>
-            <StatCard delay={320}>
-              <Label>📈 Skill Progress</Label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '6px' }}>
-                    <span style={{ color: '#6b7280' }}>⚔️ Dungetron 5000</span>
-                    <span style={{ color: '#f87171', fontWeight: 700 }}>Lv {data?.skills.dungeon ?? 0}</span>
+        {/* ═══ CONTENT ═══ */}
+        <div style={{ maxWidth: '920px', margin: '0 auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+
+          {tab === 'overview' && (
+            <>
+              {/* Stat cards */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+
+                <Card delay={0}>
+                  <p style={s.label()}>⚡ Energy</p>
+                  <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'baseline', gap: '4px' }}>
+                    <span style={s.bignum()}>{energyAnimated}</span>
+                    <span style={{ color: '#374151', fontSize: '13px' }}>/ {data?.energy.max ?? 420}</span>
                   </div>
-                  <Bar value={data?.skills.dungeon ?? 0} max={25} color="#dc2626" />
-                </div>
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '6px' }}>
-                    <span style={{ color: '#6b7280' }}>🎣 Fishing Skills</span>
-                    <span style={{ color: '#4ade80', fontWeight: 700 }}>Lv {data?.skills.fishing ?? 0}</span>
+                  <Bar value={data?.energy.current ?? 0} max={data?.energy.max ?? 420} color="linear-gradient(90deg,#c2410c,#f97316)" glow="rgba(249,115,22,0.4)" />
+                  <p style={{ ...s.muted(), marginTop: '8px' }}>+{data?.energy.regenPerHour ?? 17.5}/hr · {data?.juice.isJuiced ? 'juiced' : 'normal'}</p>
+                </Card>
+
+                <Card delay={70}>
+                  <p style={s.label()}>⚔️ Dungeon Runs</p>
+                  <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'baseline', gap: '4px' }}>
+                    <span style={s.bignum('#f87171')}>0</span>
+                    <span style={{ color: '#374151', fontSize: '13px' }}>/ 12 today</span>
                   </div>
-                  <Bar value={data?.skills.fishing ?? 0} max={10} color="#16a34a" />
-                </div>
+                  <Bar value={0} max={12} color="linear-gradient(90deg,#991b1b,#dc2626)" glow="rgba(220,38,38,0.4)" />
+                  <p style={{ ...s.muted(), marginTop: '8px' }}>Next grind: 04:10 UTC</p>
+                </Card>
+
+                <Card delay={140}>
+                  <p style={s.label()}>🎣 Fishing Casts</p>
+                  <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'baseline', gap: '4px' }}>
+                    <span style={s.bignum('#4ade80')}>{data?.fishing.castsUsed ?? '—'}</span>
+                    <span style={{ color: '#374151', fontSize: '13px' }}>/ {data?.fishing.maxPerDayJuiced ?? 20}</span>
+                  </div>
+                  <Bar value={data?.fishing.castsUsed ?? 0} max={data?.fishing.maxPerDayJuiced ?? 20} color="linear-gradient(90deg,#166534,#16a34a)" glow="rgba(22,163,74,0.4)" />
+                  <p style={{ ...s.muted(), marginTop: '8px' }}>
+                    {data ? data.fishing.maxPerDayJuiced - data.fishing.castsUsed : '—'} left
+                    {data?.fishing.hasActiveGame && <span style={{ color: '#4ade80', marginLeft: '6px' }}>● casting</span>}
+                  </p>
+                </Card>
+
+                <Card delay={210}>
+                  <p style={s.label()}>🍹 GigaJuice</p>
+                  <div style={{ marginBottom: '14px' }}>
+                    <span style={s.bignum(data?.juice.isJuiced ? '#facc15' : '#374151')}>
+                      {data?.juice.isJuiced ? `${juiceDays}d` : 'OFF'}
+                    </span>
+                  </div>
+                  <div style={s.tag(
+                    data?.juice.isJuiced ? '#facc15' : '#374151',
+                    data?.juice.isJuiced ? 'rgba(78,52,0,0.4)' : '#111',
+                    data?.juice.isJuiced ? 'rgba(113,63,18,0.5)' : '#222',
+                  )}>
+                    {data?.juice.isJuiced ? '● 30-day box active' : '○ not active'}
+                  </div>
+                </Card>
               </div>
-            </StatCard>
 
-            <StatCard delay={400}>
-              <Label>⏱️ Energy Forecast</Label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {[
-                  { label: 'Fishing big cast', target: 20, readyColor: '#4ade80', waitColor: '#f97316' },
-                  { label: 'Dungeon run', target: 40, readyColor: '#4ade80', waitColor: '#f97316' },
-                  { label: 'Full energy', target: data?.energy.max ?? 420, readyColor: '#4ade80', waitColor: '#facc15' },
-                ].map(({ label, target, readyColor, waitColor }) => {
-                  const result = forecastTime(target);
-                  const ready = result === '✓ READY';
-                  return (
-                    <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
-                      <span style={{ color: '#6b7280' }}>{label}</span>
-                      <span style={{ color: ready ? readyColor : waitColor, fontWeight: ready ? 700 : 400 }}>{result}</span>
+              {/* Energy forecast */}
+              <Card delay={280}>
+                <p style={s.label()}>⏱️ Energy Forecast</p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
+                  {[
+                    { label: 'Fishing big cast', target: 20, icon: '🎣' },
+                    { label: 'Dungeon run', target: 40, icon: '⚔️' },
+                    { label: 'Full energy', target: data?.energy.max ?? 420, icon: '⚡' },
+                  ].map(({ label, target, icon }) => {
+                    const result = forecastTime(target);
+                    const ready = result === '✓ READY';
+                    return (
+                      <div key={label} style={{ background: '#0a0a0a', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
+                        <div style={{ fontSize: '18px', marginBottom: '6px' }}>{icon}</div>
+                        <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '4px' }}>{label}</div>
+                        <div style={{ fontSize: '16px', fontWeight: 700, color: ready ? '#4ade80' : '#f97316' }}>{result}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Card>
+
+              {/* Session history */}
+              <Card delay={350}>
+                <p style={s.label()}>📊 Session History</p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', padding: '8px 0' }}>
+                  <div style={{ fontSize: '3rem', opacity: 0.08, userSelect: 'none' }}>⚔️</div>
+                  <div>
+                    <p style={{ color: '#6b7280', fontSize: '13px', margin: '0 0 4px' }}>Automated grind fires daily at 04:10 UTC</p>
+                    <p style={s.muted()}>Session results — rooms cleared, loot, level-ups — will appear here</p>
+                  </div>
+                </div>
+              </Card>
+            </>
+          )}
+
+          {tab === 'skills' && (
+            <>
+              <Card delay={0}>
+                <p style={s.label()}>⚔️ Dungeon Skills</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                  {[
+                    { name: 'Dungetron 5000', level: data?.skills.dungeon ?? 0, max: 25, color: 'linear-gradient(90deg,#991b1b,#dc2626)', glow: 'rgba(220,38,38,0.4)', icon: '🗡️' },
+                  ].map(({ name, level, max, color, glow, icon }) => (
+                    <div key={name}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', alignItems: 'center' }}>
+                        <span style={{ fontSize: '13px', color: '#9ca3af' }}>{icon} {name}</span>
+                        <span style={{ fontWeight: 700, color: '#f87171', fontSize: '14px' }}>Lv {level} <span style={{ color: '#374151', fontWeight: 400 }}>/ {max}</span></span>
+                      </div>
+                      <Bar value={level} max={max} color={color} glow={glow} />
                     </div>
-                  );
-                })}
-              </div>
-            </StatCard>
-          </div>
+                  ))}
+                </div>
+              </Card>
 
-          {/* Session placeholder */}
-          <StatCard delay={480}>
-            <Label>📊 Session History</Label>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', padding: '12px 0' }}>
-              <div style={{ fontSize: '2.5rem', opacity: 0.1 }}>⚔️</div>
-              <div>
-                <p style={{ color: '#6b7280', fontSize: '13px', margin: '0 0 4px' }}>First automated grind fires at 04:10 UTC</p>
-                <p style={{ color: '#374151', fontSize: '11px', margin: 0 }}>Session results will appear here after the first run</p>
-              </div>
-            </div>
-          </StatCard>
+              <Card delay={80}>
+                <p style={s.label()}>🎣 Fishing Skills</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                  {[
+                    { name: 'Stamana (mana)', level: 0, max: 10, color: 'linear-gradient(90deg,#166534,#16a34a)', glow: 'rgba(22,163,74,0.4)', icon: '💧', note: 'Priority 1' },
+                    { name: 'Luck (rarity)', level: 0, max: 10, color: 'linear-gradient(90deg,#854d0e,#ca8a04)', glow: 'rgba(202,138,4,0.4)', icon: '🍀', note: 'Priority 2' },
+                    { name: 'Fintuition (predict)', level: 0, max: 10, color: 'linear-gradient(90deg,#1e40af,#3b82f6)', glow: 'rgba(59,130,246,0.4)', icon: '🔮', note: 'Priority 3' },
+                    { name: 'Rod Control (crit)', level: 0, max: 10, color: 'linear-gradient(90deg,#6b21a8,#a855f7)', glow: 'rgba(168,85,247,0.4)', icon: '🎯', note: 'Priority 4' },
+                  ].map(({ name, level, max, color, glow, icon, note }) => (
+                    <div key={name}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', alignItems: 'center' }}>
+                        <span style={{ fontSize: '13px', color: '#9ca3af' }}>{icon} {name}</span>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                          <span style={{ fontSize: '10px', color: '#374151' }}>{note}</span>
+                          <span style={{ fontWeight: 700, color: '#4ade80', fontSize: '14px' }}>Lv {level} <span style={{ color: '#374151', fontWeight: 400 }}>/ {max}</span></span>
+                        </div>
+                      </div>
+                      <Bar value={level} max={max} color={color} glow={glow} />
+                    </div>
+                  ))}
+                </div>
+              </Card>
+
+              <Card delay={160}>
+                <p style={s.label()}>⚔️ Build — Stat Allocations</p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '10px', marginTop: '4px' }}>
+                  {[
+                    { stat: 'Max HP', value: '+2', level: 1, color: '#ef4444', note: 'Lv1 (respec needed)' },
+                    { stat: 'Sword ATK', value: '+0', level: 0, color: '#f97316', note: 'Target: Lv2+' },
+                    { stat: 'Max AMR', value: '+0', level: 0, color: '#a78bfa', note: 'Target: Lv3+' },
+                  ].map(({ stat, value, color, note }) => (
+                    <div key={stat} style={{ background: '#0a0a0a', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px', textAlign: 'center' }}>
+                      <div style={{ fontSize: '18px', fontWeight: 700, color, marginBottom: '4px' }}>{value}</div>
+                      <div style={{ fontSize: '11px', color: '#9ca3af', marginBottom: '4px' }}>{stat}</div>
+                      <div style={{ fontSize: '10px', color: '#4b5563' }}>{note}</div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            </>
+          )}
+
+          {tab === 'token' && (
+            <>
+              <Card delay={0}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '20px' }}>
+                  <Image src="/cyclopio.jpg" alt="$CYCLOPS" width={56} height={56} unoptimized style={{ borderRadius: '8px', border: '1px solid rgba(249,115,22,0.3)' }} />
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: '1.6rem', fontWeight: 700, color: '#f97316' }}>$CYCLOPS</h2>
+                    <p style={{ margin: '4px 0 0', color: '#6b7280', fontSize: '13px' }}>Dith&apos;s Cat · Abstract Chain · Meme Token</p>
+                  </div>
+                </div>
+
+                <p style={s.label()}>Contract Address</p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#0a0a0a', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '10px 14px', marginBottom: '20px', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '13px', color: '#9ca3af', flex: 1, minWidth: '120px', wordBreak: 'break-all' }}>
+                    {CYCLOPS_CA === 'TBA' ? '🔒 Contract address coming soon' : CYCLOPS_CA}
+                  </span>
+                  <CopyButton text={CYCLOPS_CA} />
+                </div>
+
+                <p style={s.label()}>About</p>
+                <p style={{ color: '#9ca3af', fontSize: '13px', lineHeight: 1.7, margin: '0 0 20px' }}>
+                  $CYCLOPS is a meme token on Abstract Chain built around cyclopio — the one-eyed cat spirit AI agent. 
+                  Cyclopio grinds Gigaverse dungeons and fishes daily, onchain, autonomously. All activity is verifiable on-chain.
+                </p>
+
+                <p style={s.label()}>Links</p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px' }}>
+                  {[
+                    { label: '🔍 abscan', href: `https://abscan.org/address/${WALLET}` },
+                    { label: '🤖 8004scan', href: 'https://8004scan.io/agents/646' },
+                    { label: '⚔️ Gigaverse', href: 'https://gigaverse.io' },
+                    { label: '🌐 Abstract', href: 'https://abs.xyz' },
+                  ].map(({ label, href }) => (
+                    <a key={label} href={href} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+                      <div style={{
+                        background: '#0a0a0a', border: '1px solid #1a1a1a', borderRadius: '6px',
+                        padding: '12px', textAlign: 'center', fontSize: '12px', color: '#6b7280',
+                        transition: 'all 0.2s', cursor: 'pointer',
+                      }}
+                        onMouseOver={e => { (e.currentTarget as HTMLElement).style.borderColor = '#f9731644'; (e.currentTarget as HTMLElement).style.color = '#f97316'; }}
+                        onMouseOut={e => { (e.currentTarget as HTMLElement).style.borderColor = '#1a1a1a'; (e.currentTarget as HTMLElement).style.color = '#6b7280'; }}
+                      >{label} ↗</div>
+                    </a>
+                  ))}
+                </div>
+              </Card>
+
+              <Card delay={80}>
+                <p style={s.label()}>📊 Agent Stats (onchain)</p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px' }}>
+                  {[
+                    { label: 'Agent ID', value: '#646', color: '#f97316' },
+                    { label: 'Noob ID', value: '#81339', color: '#a78bfa' },
+                    { label: 'Faction', value: 'Summoner', color: '#60a5fa' },
+                    { label: 'GigaJuice', value: data?.juice.isJuiced ? `${juiceDays}d left` : 'OFF', color: '#facc15' },
+                    { label: 'Level', value: 'Lv 1', color: '#4ade80' },
+                    { label: 'HP', value: '14 / 14', color: '#f87171' },
+                  ].map(({ label, value, color }) => (
+                    <div key={label} style={{ background: '#0a0a0a', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px', textAlign: 'center' }}>
+                      <div style={{ fontSize: '16px', fontWeight: 700, color, marginBottom: '4px' }}>{value}</div>
+                      <div style={{ fontSize: '10px', color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{label}</div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            </>
+          )}
 
           {/* Footer */}
           <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', paddingTop: '8px', borderTop: '1px solid #111', fontSize: '11px', color: '#374151' }}>
-            <span>cyclopio · powered by <a href="https://openclaw.ai" style={{ color: 'inherit', textDecoration: 'none' }}>OpenClaw</a></span>
-            <div style={{ display: 'flex', gap: '16px' }}>
-              <a href="https://gigaverse.io" target="_blank" style={{ color: 'inherit', textDecoration: 'none' }}>gigaverse.io ↗</a>
-              <a href="https://abscan.org/address/0x611dD63e34B580Af70E5029aE050B02Fa91cd10e" target="_blank" style={{ color: 'inherit', textDecoration: 'none' }}>abscan ↗</a>
-              <a href="https://8004scan.io/agent/646" target="_blank" style={{ color: 'inherit', textDecoration: 'none' }}>8004scan ↗</a>
+            <span>cyclopio 👁️ · powered by <a href="https://openclaw.ai" target="_blank" rel="noopener noreferrer" style={{ color: '#f9731666', textDecoration: 'none' }}>OpenClaw</a></span>
+            <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+              {[
+                { label: 'gigaverse.io', href: 'https://gigaverse.io' },
+                { label: 'abscan', href: `https://abscan.org/address/${WALLET}` },
+                { label: '8004scan #646', href: 'https://8004scan.io/agents/646' },
+                { label: 'abstract', href: 'https://abs.xyz' },
+              ].map(({ label, href }) => (
+                <a key={label} href={href} target="_blank" rel="noopener noreferrer"
+                  style={{ color: '#374151', textDecoration: 'none', transition: 'color 0.15s' }}
+                  onMouseOver={e => (e.currentTarget.style.color = '#f97316')}
+                  onMouseOut={e => (e.currentTarget.style.color = '#374151')}
+                >{label} ↗</a>
+              ))}
             </div>
           </div>
         </div>
@@ -329,8 +577,12 @@ export default function Dashboard() {
 
       <style>{`
         @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-7px)} }
-        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.15} }
         @keyframes slideUp { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes pulse-dot { 0%,100%{box-shadow:0 0 0 0 rgba(249,115,22,0.4)} 50%{box-shadow:0 0 0 6px rgba(249,115,22,0)} }
+        * { box-sizing: border-box; }
+        ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #080808; } ::-webkit-scrollbar-thumb { background: #1c1c1c; border-radius: 3px; }
+        a { color: inherit; }
       `}</style>
     </>
   );
